@@ -1,5 +1,6 @@
 import shutil
 import string
+import time
 from pathlib import Path
 
 ACTIVITY_DIR = Path(__file__).resolve().parents[1]
@@ -8,183 +9,94 @@ INPUT_DIR = ACTIVITY_DIR / "temp" / "input"
 OUTPUT_DIR = ACTIVITY_DIR / "temp" / "output"
 SUBMISSION_DIR = ACTIVITY_DIR / "submission"
 
+N_COPIES = 1000
+
+
+def reset_directory(directory):
+    """La carpeta debe existir y estar vacia."""
+    if directory.exists():
+        shutil.rmtree(directory)
+    directory.mkdir(parents=True)
+
+
+def generate_input_files():
+    """Genera N_COPIES copias de cada archivo de data/ en temp/input/."""
+    reset_directory(INPUT_DIR)
+    for file in DATA_DIR.glob("*.txt"):
+        text = file.read_text(encoding="utf-8")
+        for i in range(1, N_COPIES + 1):
+            new_file = INPUT_DIR / f"{file.stem}_{i:05d}.txt"
+            new_file.write_text(text, encoding="utf-8")
+
+
+def read_input_files():
+    """Lee los archivos de temp/input/ como una secuencia de (archivo, linea)."""
+    sequence = []
+    for file in INPUT_DIR.glob("*.txt"):
+        with open(file, "r", encoding="utf-8") as f:
+            for line in f:
+                sequence.append((file.name, line))
+    return sequence
+
+
+def mapper(sequence):
+    """Emite el par (palabra, 1) por cada palabra de cada linea."""
+    translation = str.maketrans("", "", string.punctuation)
+    pairs_sequence = []
+    for _, line in sequence:
+        line = line.lower().translate(translation)
+        for word in line.split():
+            pairs_sequence.append((word, 1))
+    return pairs_sequence
+
+
+def shuffle_and_sort(pairs_sequence):
+    """Ordena los pares para que las claves iguales queden contiguas."""
+    return sorted(pairs_sequence)
+
+
+def reducer(pairs_sequence):
+    """Suma los valores de cada clave (los pares deben venir ordenados)."""
+    result = []
+    for key, value in pairs_sequence:
+        if result and result[-1][0] == key:
+            result[-1] = (key, result[-1][1] + value)
+        else:
+            result.append((key, value))
+    return result
+
+
+def write_output(result):
+    """Escribe el conteo en part-00000 y el marcador _SUCCESS."""
+    reset_directory(OUTPUT_DIR)
+    with open(OUTPUT_DIR / "part-00000", "w", encoding="utf-8") as f:
+        for key, value in result:
+            f.write(f"{key}\t{value}\n")
+    (OUTPUT_DIR / "_SUCCESS").write_text("", encoding="utf-8")
+
+
+def copy_to_submission():
+    """Copia el resultado desde el HDFS simulado al disco local."""
+    SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
+    for file in OUTPUT_DIR.iterdir():
+        shutil.copy2(file, SUBMISSION_DIR)
+
 
 def main():
+    generate_input_files()
 
-    raise NotImplementedError
+    start_time = time.time()
+
+    sequence = read_input_files()
+    pairs_sequence = mapper(sequence)
+    pairs_sequence = shuffle_and_sort(pairs_sequence)
+    result = reducer(pairs_sequence)
+    write_output(result)
+    copy_to_submission()
+
+    end_time = time.time()
+    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
 
 
 if __name__ == "__main__":
     main()
-import glob
-import os.path
-import shutil
-import string
-import time
-
-ACTIVITY_FOLDER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_FOLDER = os.path.join(ACTIVITY_FOLDER, "data")
-INPUT_FOLDER = os.path.join(ACTIVITY_FOLDER, "temp", "input")
-OUTPUT_FOLDER = os.path.join(ACTIVITY_FOLDER, "temp", "output")
-SUBMISSION_FOLDER = os.path.join(ACTIVITY_FOLDER, "submission")
-
-
-
-# La carpeta input/ debe existir y estar vacia.
-# -----------------------------------------------------------------------------
-
-if os.path.exists(INPUT_FOLDER):
-    for file in glob.glob(f"{INPUT_FOLDER}/*"):
-        os.remove(file)
-else:
-    os.makedirs(INPUT_FOLDER)
-
-
-    
-# Genera copias de los archivos en raw/
-# -----------------------------------------------------------------------------
-
-n = 1000
-
-for file in glob.glob(f"{DATA_FOLDER}/*"):
-
-    with open(file, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    for i in range(1, n + 1):
-
-        raw_filename_with_extension = os.path.basename(file)
-
-        raw_filename_without_extension = os.path.splitext(raw_filename_with_extension)[
-            0
-        ]
-
-        new_filename = f"{raw_filename_without_extension}_{i:05d}.txt"
-
-        with open(f"{INPUT_FOLDER}/{new_filename}", "w", encoding="utf-8") as f2:
-            f2.write(text)
--
-            
-  
-# Lectura de los archivos
-# -----------------------------------------------------------------------------
-
-start_time = time.time()
-
-sequence = []
-files = glob.glob(f"{INPUT_FOLDER}/*")
-for file in files:
-    with open(file, "r", encoding="utf-8") as f:
-        for line in f:
-            sequence.append((file, line))
-            
-
-            
-            
-            
-            
-# Mapper
-# -----------------------------------------------------------------------------
-
-pairs_sequence = []
-for _, line in sequence:
-    line = line.lower()
-    line = line.translate(str.maketrans("", "", string.punctuation))
-    line = line.replace("\n", "")
-    words = line.split()
-    
-    
-    
-    
-    
-# Shuffle and sort
-# -----------------------------------------------------------------------------
-
-pairs_sequence = sorted(pairs_sequence)
-
-
-
-
-
-# Reducer
-# -----------------------------------------------------------------------------
-
-result = []
-for key, value in pairs_sequence:
-    if result and result[-1][0] == key:
-        result[-1] = (key, result[-1][1] + value)
-    else:
-        result.append((key, value))
-
-
-
-# La carpeta de salida debe estar vacia
-# -----------------------------------------------------------------------------
-
-if os.path.exists(OUTPUT_FOLDER):
-    for file in glob.glob(f"{OUTPUT_FOLDER}/*"):
-        os.remove(file)
-else:
-    os.makedirs(OUTPUT_FOLDER)    
-        
-        
-        
-
-        
-        
-        
-x# Archivo con el conteo
-# -----------------------------------------------------------------------------
-
-with open(f"{OUTPUT_FOLDER}/part-00000", "w", encoding="utf-8") as f:
-    for key, value in result:
-        f.write(f"{key}\t{value}\n")
-
-        
-        
-     
-        
-        
-        
-# Marcador de éxito
-# -----------------------------------------------------------------------------
-
-with open(f"{OUTPUT_FOLDER}/_SUCCESS", "w", encoding="utf-8") as f:
-    f.write("")        
-        
-
-        
-
-          
-        
-# Copia el resultado desde HDFS simulado al disco local
-# -----------------------------------------------------------------------------
-
-if os.path.exists(SUBMISSION_FOLDER):
-    for file in glob.glob(f"{SUBMISSION_FOLDER}/*"):
-        os.remove(file)
-else:
-    os.makedirs(SUBMISSION_FOLDER)
-
-for file in glob.glob(f"{OUTPUT_FOLDER}/*"):
-    shutil.copy2(file, SUBMISSION_FOLDER)
-    
-    
-
-    
-    
-# Reporte de tiempo de ejecución
-# -----------------------------------------------------------------------------
-
-end_time = time.time()
-print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")    
-    
-    
-    
-    
-    
-    
-
-    
-        
-        
