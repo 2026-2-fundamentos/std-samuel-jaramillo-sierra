@@ -1,302 +1,133 @@
+import glob
+import os.path
 import shutil
 import string
-from pathlib import Path
+import time
 
-ACTIVITY_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = ACTIVITY_DIR / "data"
-INPUT_DIR = ACTIVITY_DIR / "temp" / "input"
-OUTPUT_DIR = ACTIVITY_DIR / "temp" / "output"
-SUBMISSION_DIR = ACTIVITY_DIR / "submission"
-name: Grade activities
+ACTIVITY_FOLDER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_FOLDER = os.path.join(ACTIVITY_FOLDER, "data")
+INPUT_FOLDER = os.path.join(ACTIVITY_FOLDER, "temp", "input")
+OUTPUT_FOLDER = os.path.join(ACTIVITY_FOLDER, "temp", "output")
+SUBMISSION_FOLDER = os.path.join(ACTIVITY_FOLDER, "submission")
 
-on:
-  push:
-    branches:
-      - main
 
-  workflow_dispatch:
+# La carpeta input/ debe existir y estar vacia.
+# -----------------------------------------------------------------------------
 
-permissions:
-  contents: read
-
-jobs:
-  grade:
-    name: Grade all activities
-    runs-on: ubuntu-latest
-
-    steps:
-      # ---------------------------------------------------------
-      # Environment
-      # ---------------------------------------------------------
-
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-
-          if [ -f requirements.txt ]; then
-            python -m pip install -r requirements.txt
-          fi
-
-          python -m pip install pytest
-
-      # ---------------------------------------------------------
-      # Grading
-      # ---------------------------------------------------------
-
-      - name: Grade all activities
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import re
-          import subprocess
-          import sys
-
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-
-          # -----------------------------------------------------
-          # Directories
-          # -----------------------------------------------------
-
-          repository_root = Path.cwd()
-          grading_directory = repository_root / "grading"
-          logs_directory = grading_directory / "logs"
-
-          grading_directory.mkdir(exist_ok=True)
-          logs_directory.mkdir(exist_ok=True)
-
-
-          # -----------------------------------------------------
-          # Activity discovery
-          # -----------------------------------------------------
-
-          activity_pattern = re.compile(r"^[PL]\d{3}_")
-
-          activities = sorted(
-              (
-                  directory
-                  for directory in repository_root.iterdir()
-                  if directory.is_dir()
-                  and activity_pattern.match(directory.name)
-                  and (directory / "tests").is_dir()
-              ),
-              key=lambda directory: directory.name,
-          )
-
-
-          # -----------------------------------------------------
-          # Activity grading
-          # -----------------------------------------------------
-
-          results = {}
-
-          for activity in activities:
-              print()
-              print("=" * 70)
-              print(f"Grading {activity.name}")
-              print("=" * 70)
-
-              source_directory = activity / "src"
-              tests_directory = activity / "tests"
-
-              environment = os.environ.copy()
-              current_pythonpath = environment.get("PYTHONPATH", "")
-
-              if current_pythonpath:
-                  environment["PYTHONPATH"] = (
-                      str(source_directory)
-                      + os.pathsep
-                      + current_pythonpath
-                  )
-              else:
-                  environment["PYTHONPATH"] = str(source_directory)
-
-              completed_process = subprocess.run(
-                  [
-                      sys.executable,
-                      "-m",
-                      "pytest",
-                      str(tests_directory),
-                      "--quiet",
-                  ],
-                  cwd=repository_root,
-                  env=environment,
-                  text=True,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT,
-                  check=False,
-              )
-
-              output = completed_process.stdout
-              print(output)
-
-              log_file = logs_directory / f"{activity.name}.txt"
-              log_file.write_text(output, encoding="utf-8")
-
-              passed = completed_process.returncode == 0
-
-              results[activity.name] = {
-                  "passed": passed,
-                  "outcome": "success" if passed else "failure",
-                  "exit_code": completed_process.returncode,
-                  "log": f"logs/{activity.name}.txt",
-              }
-
-
-          # -----------------------------------------------------
-          # Consolidated result
-          # -----------------------------------------------------
-
-          passed_count = sum(
-              result["passed"]
-              for result in results.values()
-          )
-
-          total_count = len(results)
-
-          grading_result = {
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "commit_sha": os.environ["GITHUB_SHA"],
-              "run_id": int(os.environ["GITHUB_RUN_ID"]),
-              "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
-              "created_at": datetime.now(timezone.utc).isoformat(),
-              "activities": results,
-              "passed": passed_count,
-              "total": total_count,
-              "all_passed": (
-                  total_count > 0
-                  and passed_count == total_count
-              ),
-          }
-
-          result_file = grading_directory / "grading-results.json"
-
-          result_file.write_text(
-              json.dumps(grading_result, indent=2),
-              encoding="utf-8",
-          )
-
-
-          # -----------------------------------------------------
-          # GitHub Actions summary
-          # -----------------------------------------------------
-
-          summary_file = Path(os.environ["GITHUB_STEP_SUMMARY"])
-
-          with summary_file.open("a", encoding="utf-8") as file:
-              file.write("# Grading results\n\n")
-
-              if not results:
-                  file.write(
-                      "❌ No valid activity directories were found.\n\n"
-                  )
-                  file.write(
-                  "An activity must follow the `Pxxx_*` or `Lxxx_*` "
-                  "convention and contain `src/` and `tests/`.\n"
-                  )
-              else:
-                  file.write("| Activity | Result |\n")
-                  file.write("|---|---|\n")
-
-                  for activity, result in results.items():
-                      status = (
-                          "✅ Passed"
-                          if result["passed"]
-                          else "❌ Failed"
-                      )
-
-                      file.write(
-                          f"| `{activity}` | {status} |\n"
-                      )
-
-                  file.write("\n")
-                  file.write(
-                      f"**Passed: {passed_count} "
-                      f"of {total_count} activities**\n"
-                  )
-
-
-          # -----------------------------------------------------
-          # Console result
-          # -----------------------------------------------------
-
-          print()
-          print("=" * 70)
-          print("Consolidated result")
-          print("=" * 70)
-          print(json.dumps(grading_result, indent=2))
-          PY
-
-      # ---------------------------------------------------------
-      # Artifact
-      # ---------------------------------------------------------
-
-      - name: Upload grading results
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: grading-${{ github.sha }}
-          path: grading/
-          retention-days: 90
-          if-no-files-found: error
-
-      # ---------------------------------------------------------
-      # Final workflow status
-      # ---------------------------------------------------------
-
-      - name: Set final workflow status
-        if: always()
-        run: |
-          python - <<'PY'
-          import json
-          import sys
-
-          from pathlib import Path
-
-
-          result_file = Path("grading/grading-results.json")
-
-          if not result_file.exists():
-              print("The grading result was not generated.")
-              sys.exit(1)
-
-          grading_result = json.loads(
-              result_file.read_text(encoding="utf-8")
-          )
-
-          if grading_result["total"] == 0:
-              print("No valid activities were found.")
-              sys.exit(1)
-
-          failed_activities = [
-              activity
-              for activity, result
-              in grading_result["activities"].items()
-              if not result["passed"]
-          ]
-
-          if failed_activities:
-              print("The following activities failed:")
-
-              for activity in failed_activities:
-                  print(f"- {activity}")
-
-              sys.exit(1)
-
-          print("All activities passed.")
-          PY
-
-          
-          
-          
-          
+if os.path.exists(INPUT_FOLDER):
+    for file in glob.glob(f"{INPUT_FOLDER}/*"):
+        os.remove(file)
+else:
+    os.makedirs(INPUT_FOLDER)
+
+
+# Genera copias de los archivos en raw/
+# -----------------------------------------------------------------------------
+
+n = 1000
+
+for file in glob.glob(f"{DATA_FOLDER}/*"):
+
+    with open(file, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    for i in range(1, n + 1):
+
+        raw_filename_with_extension = os.path.basename(file)
+
+        raw_filename_without_extension = os.path.splitext(raw_filename_with_extension)[
+            0
+        ]
+
+        new_filename = f"{raw_filename_without_extension}_{i:05d}.txt"
+
+        with open(f"{INPUT_FOLDER}/{new_filename}", "w", encoding="utf-8") as f2:
+            f2.write(text)
+
+
+# Lectura de los archivos
+# -----------------------------------------------------------------------------
+
+start_time = time.time()
+
+sequence = []
+files = glob.glob(f"{INPUT_FOLDER}/*")
+for file in files:
+    with open(file, "r", encoding="utf-8") as f:
+        for line in f:
+            sequence.append((file, line))
+
+
+# Mapper
+# -----------------------------------------------------------------------------
+
+pairs_sequence = []
+for _, line in sequence:
+    line = line.lower()
+    line = line.translate(str.maketrans("", "", string.punctuation))
+    line = line.replace("\n", "")
+    words = line.split()
+    for word in words:
+        pairs_sequence.append((word, 1))
+
+
+# Shuffle and sort
+# -----------------------------------------------------------------------------
+
+pairs_sequence = sorted(pairs_sequence)
+
+
+# Reducer
+# -----------------------------------------------------------------------------
+
+result = []
+for key, value in pairs_sequence:
+    if result and result[-1][0] == key:
+        result[-1] = (key, result[-1][1] + value)
+    else:
+        result.append((key, value))
+
+
+# La carpeta de salida debe estar vacia
+# -----------------------------------------------------------------------------
+
+if os.path.exists(OUTPUT_FOLDER):
+    for file in glob.glob(f"{OUTPUT_FOLDER}/*"):
+        os.remove(file)
+else:
+    os.makedirs(OUTPUT_FOLDER)
+
+
+# Archivo con el conteo
+# -----------------------------------------------------------------------------
+
+with open(f"{OUTPUT_FOLDER}/part-00000", "w", encoding="utf-8") as f:
+    for key, value in result:
+        f.write(f"{key}\t{value}\n")
+
+
+# Marcador de éxito
+# -----------------------------------------------------------------------------
+
+with open(f"{OUTPUT_FOLDER}/_SUCCESS", "w", encoding="utf-8") as f:
+    f.write("")
+
+
+# Copia el resultado desde HDFS simulado al disco local
+# -----------------------------------------------------------------------------
+
+if os.path.exists(SUBMISSION_FOLDER):
+    for file in glob.glob(f"{SUBMISSION_FOLDER}/*"):
+        os.remove(file)
+else:
+    os.makedirs(SUBMISSION_FOLDER)
+
+for file in glob.glob(f"{OUTPUT_FOLDER}/*"):
+    shutil.copy2(file, SUBMISSION_FOLDER)
+
+
+# Reporte de tiempo de ejecución
+# -----------------------------------------------------------------------------
+
+end_time = time.time()
+print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
