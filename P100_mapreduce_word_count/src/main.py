@@ -1,6 +1,5 @@
 import shutil
 import string
-import time
 from pathlib import Path
 
 ACTIVITY_DIR = Path(__file__).resolve().parents[1]
@@ -8,95 +7,296 @@ DATA_DIR = ACTIVITY_DIR / "data"
 INPUT_DIR = ACTIVITY_DIR / "temp" / "input"
 OUTPUT_DIR = ACTIVITY_DIR / "temp" / "output"
 SUBMISSION_DIR = ACTIVITY_DIR / "submission"
+name: Grade activities
 
-N_COPIES = 1000
+on:
+  push:
+    branches:
+      - main
 
+  workflow_dispatch:
 
-def reset_directory(directory):
-    """La carpeta debe existir y estar vacia."""
-    if directory.exists():
-        shutil.rmtree(directory)
-    directory.mkdir(parents=True)
+permissions:
+  contents: read
 
+jobs:
+  grade:
+    name: Grade all activities
+    runs-on: ubuntu-latest
 
-def generate_input_files():
-    """Genera N_COPIES copias de cada archivo de data/ en temp/input/."""
-    reset_directory(INPUT_DIR)
-    for file in DATA_DIR.glob("*.txt"):
-        text = file.read_text(encoding="utf-8")
-        for i in range(1, N_COPIES + 1):
-            new_file = INPUT_DIR / f"{file.stem}_{i:05d}.txt"
-            new_file.write_text(text, encoding="utf-8")
+    steps:
+      # ---------------------------------------------------------
+      # Environment
+      # ---------------------------------------------------------
 
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-def read_input_files():
-    """Lee los archivos de temp/input/ como una secuencia de (archivo, linea)."""
-    sequence = []
-    for file in INPUT_DIR.glob("*.txt"):
-        with open(file, "r", encoding="utf-8") as f:
-            for line in f:
-                sequence.append((file.name, line))
-    return sequence
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
 
-def mapper(sequence):
-    """Emite el par (palabra, 1) por cada palabra de cada linea."""
-    translation = str.maketrans("", "", string.punctuation)
-    pairs_sequence = []
-    for _, line in sequence:
-        line = line.lower().translate(translation)
-        for word in line.split():
-            pairs_sequence.append((word, 1))
-    return pairs_sequence
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
 
+          python -m pip install pytest
 
-def shuffle_and_sort(pairs_sequence):
-    """Ordena los pares para que las claves iguales queden contiguas."""
-    return sorted(pairs_sequence)
+      # ---------------------------------------------------------
+      # Grading
+      # ---------------------------------------------------------
 
+      - name: Grade all activities
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
 
-def reducer(pairs_sequence):
-    """Suma los valores de cada clave (los pares deben venir ordenados)."""
-    result = []
-    for key, value in pairs_sequence:
-        if result and result[-1][0] == key:
-            result[-1] = (key, result[-1][1] + value)
-        else:
-            result.append((key, value))
-    return result
-
-
-def write_output(result):
-    """Escribe el conteo en part-00000 y el marcador _SUCCESS."""
-    reset_directory(OUTPUT_DIR)
-    with open(OUTPUT_DIR / "part-00000", "w", encoding="utf-8") as f:
-        for key, value in result:
-            f.write(f"{key}\t{value}\n")
-    (OUTPUT_DIR / "_SUCCESS").write_text("", encoding="utf-8")
+          from datetime import datetime, timezone
+          from pathlib import Path
 
 
-def copy_to_submission():
-    """Copia el resultado desde el HDFS simulado al disco local."""
-    SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
-    for file in OUTPUT_DIR.iterdir():
-        shutil.copy2(file, SUBMISSION_DIR)
+          # -----------------------------------------------------
+          # Directories
+          # -----------------------------------------------------
+
+          repository_root = Path.cwd()
+          grading_directory = repository_root / "grading"
+          logs_directory = grading_directory / "logs"
+
+          grading_directory.mkdir(exist_ok=True)
+          logs_directory.mkdir(exist_ok=True)
 
 
-def main():
-    generate_input_files()
+          # -----------------------------------------------------
+          # Activity discovery
+          # -----------------------------------------------------
 
-    start_time = time.time()
+          activity_pattern = re.compile(r"^[PL]\d{3}_")
 
-    sequence = read_input_files()
-    pairs_sequence = mapper(sequence)
-    pairs_sequence = shuffle_and_sort(pairs_sequence)
-    result = reducer(pairs_sequence)
-    write_output(result)
-    copy_to_submission()
+          activities = sorted(
+              (
+                  directory
+                  for directory in repository_root.iterdir()
+                  if directory.is_dir()
+                  and activity_pattern.match(directory.name)
+                  and (directory / "tests").is_dir()
+              ),
+              key=lambda directory: directory.name,
+          )
 
-    end_time = time.time()
-    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
+
+          # -----------------------------------------------------
+          # Activity grading
+          # -----------------------------------------------------
+
+          results = {}
+
+          for activity in activities:
+              print()
+              print("=" * 70)
+              print(f"Grading {activity.name}")
+              print("=" * 70)
+
+              source_directory = activity / "src"
+              tests_directory = activity / "tests"
+
+              environment = os.environ.copy()
+              current_pythonpath = environment.get("PYTHONPATH", "")
+
+              if current_pythonpath:
+                  environment["PYTHONPATH"] = (
+                      str(source_directory)
+                      + os.pathsep
+                      + current_pythonpath
+                  )
+              else:
+                  environment["PYTHONPATH"] = str(source_directory)
+
+              completed_process = subprocess.run(
+                  [
+                      sys.executable,
+                      "-m",
+                      "pytest",
+                      str(tests_directory),
+                      "--quiet",
+                  ],
+                  cwd=repository_root,
+                  env=environment,
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  check=False,
+              )
+
+              output = completed_process.stdout
+              print(output)
+
+              log_file = logs_directory / f"{activity.name}.txt"
+              log_file.write_text(output, encoding="utf-8")
+
+              passed = completed_process.returncode == 0
+
+              results[activity.name] = {
+                  "passed": passed,
+                  "outcome": "success" if passed else "failure",
+                  "exit_code": completed_process.returncode,
+                  "log": f"logs/{activity.name}.txt",
+              }
 
 
-if __name__ == "__main__":
-    main()
+          # -----------------------------------------------------
+          # Consolidated result
+          # -----------------------------------------------------
+
+          passed_count = sum(
+              result["passed"]
+              for result in results.values()
+          )
+
+          total_count = len(results)
+
+          grading_result = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_number": int(os.environ["GITHUB_RUN_NUMBER"]),
+              "created_at": datetime.now(timezone.utc).isoformat(),
+              "activities": results,
+              "passed": passed_count,
+              "total": total_count,
+              "all_passed": (
+                  total_count > 0
+                  and passed_count == total_count
+              ),
+          }
+
+          result_file = grading_directory / "grading-results.json"
+
+          result_file.write_text(
+              json.dumps(grading_result, indent=2),
+              encoding="utf-8",
+          )
+
+
+          # -----------------------------------------------------
+          # GitHub Actions summary
+          # -----------------------------------------------------
+
+          summary_file = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          with summary_file.open("a", encoding="utf-8") as file:
+              file.write("# Grading results\n\n")
+
+              if not results:
+                  file.write(
+                      "❌ No valid activity directories were found.\n\n"
+                  )
+                  file.write(
+                  "An activity must follow the `Pxxx_*` or `Lxxx_*` "
+                  "convention and contain `src/` and `tests/`.\n"
+                  )
+              else:
+                  file.write("| Activity | Result |\n")
+                  file.write("|---|---|\n")
+
+                  for activity, result in results.items():
+                      status = (
+                          "✅ Passed"
+                          if result["passed"]
+                          else "❌ Failed"
+                      )
+
+                      file.write(
+                          f"| `{activity}` | {status} |\n"
+                      )
+
+                  file.write("\n")
+                  file.write(
+                      f"**Passed: {passed_count} "
+                      f"of {total_count} activities**\n"
+                  )
+
+
+          # -----------------------------------------------------
+          # Console result
+          # -----------------------------------------------------
+
+          print()
+          print("=" * 70)
+          print("Consolidated result")
+          print("=" * 70)
+          print(json.dumps(grading_result, indent=2))
+          PY
+
+      # ---------------------------------------------------------
+      # Artifact
+      # ---------------------------------------------------------
+
+      - name: Upload grading results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: grading-${{ github.sha }}
+          path: grading/
+          retention-days: 90
+          if-no-files-found: error
+
+      # ---------------------------------------------------------
+      # Final workflow status
+      # ---------------------------------------------------------
+
+      - name: Set final workflow status
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+
+          from pathlib import Path
+
+
+          result_file = Path("grading/grading-results.json")
+
+          if not result_file.exists():
+              print("The grading result was not generated.")
+              sys.exit(1)
+
+          grading_result = json.loads(
+              result_file.read_text(encoding="utf-8")
+          )
+
+          if grading_result["total"] == 0:
+              print("No valid activities were found.")
+              sys.exit(1)
+
+          failed_activities = [
+              activity
+              for activity, result
+              in grading_result["activities"].items()
+              if not result["passed"]
+          ]
+
+          if failed_activities:
+              print("The following activities failed:")
+
+              for activity in failed_activities:
+                  print(f"- {activity}")
+
+              sys.exit(1)
+
+          print("All activities passed.")
+          PY
+
+          
+          
+          
+          
