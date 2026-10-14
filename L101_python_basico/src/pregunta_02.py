@@ -1,3 +1,10 @@
+import csv
+import gzip
+from pathlib import Path
+
+DATA_FILE = Path(__file__).resolve().parents[1] / "data" / "data.csv.gz"
+
+
 def pregunta_02():
     """
     Cuente cuántos registros hay para cada letra de la primera columna
@@ -9,4 +16,12 @@ def pregunta_02():
         [("A", 8), ("B", 7), ("C", 5), ...]
     """
 
-    raise NotImplementedError
+    with gzip.open(DATA_FILE, "rt", encoding="utf-8") as file:
+        rows = list(csv.reader(file, delimiter="\t"))
+
+    counts = {}
+    for row in rows:
+        letter = row[0]
+        counts[letter] = counts.get(letter, 0) + 1
+
+    return sorted(counts.items())
