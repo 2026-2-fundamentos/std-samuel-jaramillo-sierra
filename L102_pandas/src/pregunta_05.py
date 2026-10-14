@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def pregunta_05():
     """
     Usando `data/tbl0.tsv`, encuentre el valor máximo de la columna `c2` para
@@ -13,4 +16,6 @@ def pregunta_05():
         ...
     """
 
-    raise NotImplementedError
+    df = pd.read_csv("data/tbl0.tsv", sep="\t")
+
+    return df.groupby("c1")["c2"].max()

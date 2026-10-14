@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def pregunta_12():
     """
     En `data/tbl2.tsv`, cada valor de la columna `c0` aparece en varias
@@ -15,4 +18,19 @@ def pregunta_12():
         ...
     """
 
-    raise NotImplementedError
+    df = pd.read_csv("data/tbl2.tsv", sep="\t")
+
+    # Une las dos columnas en un solo texto: "jjj" y 3 -> "jjj:3"
+    df["c5"] = df["c5a"] + ":" + df["c5b"].astype(str)
+
+    valores_c0 = sorted(df["c0"].unique())
+
+    textos = []
+    for valor in valores_c0:
+        pares = df[df["c0"] == valor]["c5"]
+        pares = sorted(pares)
+        textos.append(",".join(pares))
+
+    resultado = pd.DataFrame({"c0": valores_c0, "c5": textos})
+
+    return resultado

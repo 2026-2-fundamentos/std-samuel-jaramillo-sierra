@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def pregunta_03():
     """
     Usando `data/tbl0.tsv`, cuente cuántos registros hay para cada categoría
@@ -13,4 +16,6 @@ def pregunta_03():
         ...
     """
 
-    raise NotImplementedError
+    df = pd.read_csv("data/tbl0.tsv", sep="\t")
+
+    return df.groupby("c1").size()

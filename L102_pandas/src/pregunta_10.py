@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def pregunta_10():
     """
     Usando `data/tbl0.tsv`, construya para cada categoría de la columna `c1`
@@ -15,4 +18,22 @@ def pregunta_10():
         ...
     """
 
-    raise NotImplementedError
+    df = pd.read_csv("data/tbl0.tsv", sep="\t")
+
+    categorias = sorted(df["c1"].unique())
+
+    textos = []
+    for categoria in categorias:
+        valores = df[df["c1"] == categoria]["c2"]
+        valores = sorted(valores)
+
+        partes = []
+        for valor in valores:
+            partes.append(str(valor))
+
+        textos.append(":".join(partes))
+
+    resultado = pd.DataFrame({"c2": textos}, index=categorias)
+    resultado.index.name = "c1"
+
+    return resultado

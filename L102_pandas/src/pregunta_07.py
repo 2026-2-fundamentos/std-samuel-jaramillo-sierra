@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def pregunta_07():
     """
     Usando `data/tbl0.tsv`, sume los valores de la columna `c2` para cada
@@ -13,4 +16,6 @@ def pregunta_07():
         ...
     """
 
-    raise NotImplementedError
+    df = pd.read_csv("data/tbl0.tsv", sep="\t")
+
+    return df.groupby("c1")["c2"].sum()
