@@ -1,3 +1,66 @@
+import json
+import os
+
+import pandas as pd
+
+
+def grupo_edad(edad):
+    if edad < 30:
+        return "18-29"
+    elif edad < 40:
+        return "30-39"
+    elif edad < 50:
+        return "40-49"
+    else:
+        return "50-64"
+
+
+def grupo_bmi(bmi):
+    if bmi < 18.5:
+        return "bajo peso"
+    elif bmi < 25:
+        return "normal"
+    elif bmi < 30:
+        return "sobrepeso"
+    else:
+        return "obesidad"
+
+
+def grupo_hijos(hijos):
+    if hijos == 0:
+        return "0"
+    elif hijos <= 2:
+        return "1-2"
+    else:
+        return "3+"
+
+
+def evaluar_esquema(df, columnas, k):
+    """Suprime las clases con menos de k registros y mide la diversidad de smoker."""
+
+    # Tamaño de la clase de equivalencia a la que pertenece cada registro
+    tamanos = df.groupby(columnas)["charges"].transform("size")
+
+    publicados = df[tamanos >= k]
+
+    # Clases publicadas donde todos fuman o nadie fuma (un solo valor de smoker)
+    valores_smoker = publicados.groupby(columnas)["smoker"].transform("nunique")
+    sin_diversidad = publicados[valores_smoker == 1]
+
+    resumen = {
+        "quasi_identifiers": columnas,
+        "equivalence_classes": df.groupby(columnas).ngroups,
+        "k_before_suppression": int(tamanos.min()),
+        "suppressed_records": int((tamanos < k).sum()),
+        "published_records": len(publicados),
+        "published_classes": publicados.groupby(columnas).ngroups,
+        "classes_without_smoker_diversity": sin_diversidad.groupby(columnas).ngroups,
+        "records_without_smoker_diversity": len(sin_diversidad),
+    }
+
+    return resumen, publicados
+
+
 def pregunta_01():
     """
     Una aseguradora quiere publicar datos de sus afiliados para que un grupo
@@ -80,4 +143,58 @@ def pregunta_01():
         }
     """
 
-    raise NotImplementedError
+    df = pd.read_csv("data/insurance.csv.gz")
+    k = 5
+
+    # Riesgo con los cuasi-identificadores originales, sin generalizar
+    originales = ["age", "sex", "bmi", "children", "region"]
+    tamanos_originales = df.groupby(originales)["charges"].transform("size")
+
+    # Generalización: cada valor se reemplaza por su grupo
+    df["age_group"] = df["age"].apply(grupo_edad)
+    df["bmi_group"] = df["bmi"].apply(grupo_bmi)
+    df["children_group"] = df["children"].apply(grupo_hijos)
+
+    esquemas = {
+        "with_children": ["age_group", "sex", "bmi_group", "children_group", "region"],
+        "without_children": ["age_group", "sex", "bmi_group", "region"],
+    }
+
+    resumenes = {}
+    publicados_por_esquema = {}
+    for nombre, columnas in esquemas.items():
+        resumen, publicados = evaluar_esquema(df, columnas, k)
+        resumenes[nombre] = resumen
+        publicados_por_esquema[nombre] = publicados
+
+    # Se elige el esquema que suprime menos registros
+    if (
+        resumenes["with_children"]["suppressed_records"]
+        < resumenes["without_children"]["suppressed_records"]
+    ):
+        seleccionado = "with_children"
+    else:
+        seleccionado = "without_children"
+
+    publicados = publicados_por_esquema[seleccionado]
+
+    reporte = {
+        "original_k": int(tamanos_originales.min()),
+        "original_unique_records": int((tamanos_originales == 1).sum()),
+        "schemes": resumenes,
+        "selected_scheme": seleccionado,
+        "mean_charges_original": float(df["charges"].mean()),
+        "mean_charges_published": float(publicados["charges"].mean()),
+        "smoker_rate_original": float((df["smoker"] == "yes").mean()),
+        "smoker_rate_published": float((publicados["smoker"] == "yes").mean()),
+    }
+
+    os.makedirs("submission", exist_ok=True)
+    with open("submission/privacy_report.json", "w", encoding="utf-8") as archivo:
+        json.dump(reporte, archivo, indent=2, ensure_ascii=False)
+
+    # Filtrar con df[...] conserva el orden original de los registros
+    columnas_csv = esquemas[seleccionado] + ["smoker", "charges"]
+    publicados[columnas_csv].to_csv("submission/insurance_published.csv", index=False)
+
+    return reporte
