@@ -1,3 +1,8 @@
+import os
+
+import pandas as pd
+
+
 def pregunta_01():
     """
     El archivo `data/solicitudes_de_credito.csv.gz` contiene las solicitudes de
@@ -34,4 +39,69 @@ def pregunta_01():
         ...
     """
 
-    raise NotImplementedError
+    # index_col=0: la primera columna es un índice que no pertenece a los datos
+    df = pd.read_csv(
+        "data/solicitudes_de_credito.csv.gz",
+        sep=";",
+        index_col=0,
+    )
+
+    # Campos de texto: minúsculas y palabras separadas por espacios
+    columnas_texto = [
+        "sexo",
+        "tipo_de_emprendimiento",
+        "idea_negocio",
+        "barrio",
+        "línea_credito",
+    ]
+    for columna in columnas_texto:
+        df[columna] = (
+            df[columna]
+            .str.lower()
+            .str.replace("_", " ")
+            .str.replace("-", " ")
+            .str.strip()
+        )
+
+    # Pandas ya lee "02" como el entero 2; se deja explícito
+    df["estrato"] = df["estrato"].astype(int)
+
+    # Monto: "$ 7,000,000.00" -> 7000000
+    df["monto_del_credito"] = (
+        df["monto_del_credito"]
+        .str.replace("$", "")
+        .str.replace(",", "")
+        .str.strip()
+        .astype(float)
+        .astype(int)
+    )
+
+    # Las fechas vienen como DD/MM/AAAA o como AAAA/MM/DD: se lee con un
+    # formato y lo que no se pudo leer se completa con el otro
+    fechas = pd.to_datetime(
+        df["fecha_de_beneficio"], format="%d/%m/%Y", errors="coerce"
+    )
+    fechas = fechas.fillna(
+        pd.to_datetime(df["fecha_de_beneficio"], format="%Y/%m/%d", errors="coerce")
+    )
+    df["fecha_de_beneficio"] = fechas.dt.strftime("%Y-%m-%d")
+
+    # Registros incompletos: se eliminan, pero los faltantes de
+    # comuna_ciudadano son válidos y se conservan
+    columnas_obligatorias = [
+        "sexo",
+        "tipo_de_emprendimiento",
+        "idea_negocio",
+        "barrio",
+        "estrato",
+        "fecha_de_beneficio",
+        "monto_del_credito",
+        "línea_credito",
+    ]
+    df = df.dropna(subset=columnas_obligatorias)
+
+    # Los duplicados se quitan al final, cuando ya todo está escrito igual
+    df = df.drop_duplicates()
+
+    os.makedirs("submission", exist_ok=True)
+    df.to_csv("submission/solicitudes_de_credito.csv", sep=";", index=False)
