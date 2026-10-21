@@ -1,3 +1,6 @@
+import glob
+import os
+
 import pandas as pd
 
 
@@ -43,4 +46,60 @@ def clean_campaign_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         ...
     """
 
-    raise NotImplementedError
+    # Pandas lee los .csv.gz directamente; se unen los 10 archivos en una tabla
+    tablas = []
+    for archivo in sorted(glob.glob("data/bank-marketing-campaing-*.csv.gz")):
+        # index_col=0: la primera columna es un índice que sobra
+        tablas.append(pd.read_csv(archivo, index_col=0))
+    df = pd.concat(tablas, ignore_index=True)
+
+    # --- Tabla client ---
+    client = df[
+        [
+            "client_id",
+            "age",
+            "job",
+            "marital",
+            "education",
+            "credit_default",
+            "mortgage",
+        ]
+    ].copy()
+    client["job"] = client["job"].str.replace(".", "").str.replace("-", "_")
+    client["education"] = client["education"].str.replace(".", "_")
+    client["education"] = client["education"].replace("unknown", pd.NA)
+    # (condición).astype(int) convierte True/False en 1/0
+    client["credit_default"] = (client["credit_default"] == "yes").astype(int)
+    client["mortgage"] = (client["mortgage"] == "yes").astype(int)
+
+    # --- Tabla campaign ---
+    campaign = df[
+        [
+            "client_id",
+            "number_contacts",
+            "contact_duration",
+            "previous_campaign_contacts",
+            "previous_outcome",
+            "campaign_outcome",
+        ]
+    ].copy()
+    campaign["previous_outcome"] = (campaign["previous_outcome"] == "success").astype(
+        int
+    )
+    campaign["campaign_outcome"] = (campaign["campaign_outcome"] == "yes").astype(int)
+
+    # Fecha: mes "may" y día 13 -> "2022-may-13" -> "2022-05-13"
+    texto_fecha = "2022-" + df["month"] + "-" + df["day"].astype(str)
+    campaign["last_contact_date"] = pd.to_datetime(
+        texto_fecha, format="%Y-%b-%d"
+    ).dt.strftime("%Y-%m-%d")
+
+    # --- Tabla economics ---
+    economics = df[["client_id", "cons_price_idx", "euribor_three_months"]].copy()
+
+    os.makedirs("submission", exist_ok=True)
+    client.to_csv("submission/client.csv", index=False)
+    campaign.to_csv("submission/campaign.csv", index=False)
+    economics.to_csv("submission/economics.csv", index=False)
+
+    return client, campaign, economics
