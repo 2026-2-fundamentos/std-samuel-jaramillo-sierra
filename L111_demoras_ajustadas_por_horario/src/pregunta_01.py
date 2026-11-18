@@ -1,4 +1,113 @@
+from pathlib import Path
+
 import pandas as pd
+
+ACTIVITY_DIR = Path(__file__).resolve().parents[1]
+INPUT_FILE = ACTIVITY_DIR / "data" / "flights_by_carrier_day_hour.csv.gz"
+SUBMISSION_DIR = ACTIVITY_DIR / "submission"
+
+MIN_OPERATED_FLIGHTS = 100_000
+
+
+def load_flights():
+    df = pd.read_csv(INPUT_FILE)
+    return df
+
+
+def build_hourly_delay_rates(df):
+    # Paso 1: tasa nacional de demora de cada hora, con todas las aerolíneas juntas
+    # Casos tipicos
+    # hora 6 -> 92846 demorados / 1477488 operados = 0.0628
+    # hora 19 -> 368607 demorados / 1210173 operados = 0.3046
+    hourly = df.groupby("scheduled_departure_hour", as_index=False).agg(
+        operated_flights=("operated_flights", "sum"),
+        delayed_departure_15_flights=("delayed_departure_15_flights", "sum"),
+    )
+    hourly["operated_flights"] = hourly["operated_flights"].astype(int)
+    hourly["delayed_departure_15_flights"] = hourly[
+        "delayed_departure_15_flights"
+    ].astype(int)
+    hourly["delay_rate"] = (
+        hourly["delayed_departure_15_flights"] / hourly["operated_flights"]
+    )
+    return hourly
+
+
+def add_expected_delays(df, hourly):
+    # Paso 2: a cada fila se le pega la tasa nacional de su hora, y las demoras
+    # esperadas son sus vuelos operados por esa tasa
+    national_rates = hourly[["scheduled_departure_hour", "delay_rate"]]
+    national_rates = national_rates.rename(
+        columns={"delay_rate": "national_delay_rate"}
+    )
+
+    df = df.merge(
+        national_rates,
+        on="scheduled_departure_hour",
+        how="left",
+    )
+    df["expected_delayed_flights"] = (
+        df["operated_flights"] * df["national_delay_rate"]
+    )
+    return df
+
+
+def build_carrier_adjusted_delays(df):
+    # Se suman las horas de cada aerolínea
+    carriers = df.groupby("reporting_airline", as_index=False).agg(
+        operated_flights=("operated_flights", "sum"),
+        delayed_departure_15_flights=("delayed_departure_15_flights", "sum"),
+        expected_delayed_flights=("expected_delayed_flights", "sum"),
+    )
+    carriers["operated_flights"] = carriers["operated_flights"].astype(int)
+    carriers["delayed_departure_15_flights"] = carriers[
+        "delayed_departure_15_flights"
+    ].astype(int)
+
+    # Solo aerolíneas con al menos 100 000 vuelos operados
+    carriers = carriers[carriers["operated_flights"] >= MIN_OPERATED_FLIGHTS]
+    carriers = carriers.copy()
+
+    # Tasa sin ajustar
+    carriers["delay_rate"] = (
+        carriers["delayed_departure_15_flights"] / carriers["operated_flights"]
+    )
+
+    # Paso 3: demoras observadas sobre esperadas
+    # Mayor que 1 -> se demora más de lo que explican sus horarios
+    carriers["observed_to_expected_ratio"] = (
+        carriers["delayed_departure_15_flights"] / carriers["expected_delayed_flights"]
+    )
+
+    # Rankings: 1 es la peor aerolínea (la de valor más alto)
+    carriers["crude_rank"] = (
+        carriers["delay_rate"].rank(ascending=False, method="first").astype(int)
+    )
+    carriers["adjusted_rank"] = (
+        carriers["observed_to_expected_ratio"]
+        .rank(ascending=False, method="first")
+        .astype(int)
+    )
+
+    carriers = carriers.sort_values("adjusted_rank")
+    carriers = carriers[
+        [
+            "reporting_airline",
+            "operated_flights",
+            "delayed_departure_15_flights",
+            "delay_rate",
+            "expected_delayed_flights",
+            "observed_to_expected_ratio",
+            "crude_rank",
+            "adjusted_rank",
+        ]
+    ]
+    return carriers
+
+
+def save_table(table, file_name):
+    SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
+    table.to_csv(SUBMISSION_DIR / file_name, index=False)
 
 
 def pregunta_01() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -58,4 +167,16 @@ def pregunta_01() -> tuple[pd.DataFrame, pd.DataFrame]:
         ...
     """
 
-    raise NotImplementedError
+    df = load_flights()
+    hourly_delay_rates = build_hourly_delay_rates(df)
+    df = add_expected_delays(df, hourly_delay_rates)
+    carrier_adjusted_delays = build_carrier_adjusted_delays(df)
+
+    # Los resultados se redondean a 4 decimales
+    hourly_delay_rates = hourly_delay_rates.round(4)
+    carrier_adjusted_delays = carrier_adjusted_delays.round(4)
+
+    save_table(hourly_delay_rates, "hourly_delay_rates.csv")
+    save_table(carrier_adjusted_delays, "carrier_adjusted_delays.csv")
+
+    return hourly_delay_rates, carrier_adjusted_delays
