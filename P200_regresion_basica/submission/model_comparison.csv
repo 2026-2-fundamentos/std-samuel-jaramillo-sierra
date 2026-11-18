@@ -1,4 +1,4 @@
-model,mean_squared_error
+model,test_mse
 horsepower_model,22.026387306979775
 linear_model,10.02242464063654
 linear_flexible_model,7.441403568662471
