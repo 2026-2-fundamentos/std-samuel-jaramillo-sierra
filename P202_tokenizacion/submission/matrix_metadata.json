@@ -1,0 +1,11 @@
+{
+  "n_documents": 387,
+  "n_terms": 2492,
+  "n_nonzero": 29303,
+  "sparsity": 0.9696,
+  "min_df": 2,
+  "stop_words": "sklearn ENGLISH_STOP_WORDS",
+  "stemmer": "nltk PorterStemmer",
+  "rows": "scopus_record_id, en el orden de tokenized_abstracts.csv",
+  "columns": "term_id, en el orden de vocabulary.csv"
+}
