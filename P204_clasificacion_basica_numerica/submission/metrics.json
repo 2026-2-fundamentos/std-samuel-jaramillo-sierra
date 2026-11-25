@@ -1,0 +1,15 @@
+{
+  "base_estimator": {
+    "train_accuracy": 0.9949748743718593,
+    "test_accuracy": 0.9532163742690059,
+    "test_balanced_accuracy": 0.9500584112149533,
+    "test_recall_malignant": 0.9375
+  },
+  "flexible_estimator": {
+    "train_accuracy": 0.964824120603015,
+    "test_accuracy": 0.9473684210526315,
+    "test_balanced_accuracy": 0.9422459112149533,
+    "test_recall_malignant": 0.921875
+  },
+  "test_size": 171
+}
